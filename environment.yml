@@ -1,0 +1,14 @@
+name: DACON_2605
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas
+  - numpy
+  - plotly
+  - ipykernel
+  - matplotlib
+  - scikit-learn
+  - nbformat
+  - ipywidgets
