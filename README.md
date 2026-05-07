@@ -10,13 +10,13 @@
 다운로드한 파일의 압축을 해제한 후, 기본 폴더 이름인 `open`을 `data`로 변경해야 스크립트가 정상적으로 작동합니다.
 
 ## 3. 최종 Directory 
-.
-├── .gitignore           # data/ 폴더 제외 설정 포함
-├── data/                # old open folder
-│   ├── train.csv
-│   ├── test.csv
-│   └── ...
-├── result/
-│   ├── ...              # submission.csv
-├── main.py              # 실행 스크립트
-└── README.md            
+.  
+├── .gitignore          # data/ 폴더 제외 설정 포함   
+├── data/               # old open folder   
+│   ├── train.csv  
+│   ├── test.csv  
+│   └── ...  
+├── result/             # 결과 저장 폴더  
+│   └── submission.csv  # 최종 제출 파일  
+├── main.py             # 실행 스크립트  
+└── README.md  
