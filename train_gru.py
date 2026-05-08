@@ -26,8 +26,9 @@ class Config:
     
     # 학습 설정
     batch_size = 64
-    epochs = 300
-    lr = 0.00001
+    epochs = 600
+    lr = 5e-4
+    patience = 20
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ==========================================
@@ -121,7 +122,8 @@ def train():
             "num_layers": Config.num_layers,
             "batch_size": Config.batch_size,
             "epochs": Config.epochs,
-            "lr": Config.lr
+            "lr": Config.lr,
+            "patience": Config.patience
         }
     )
     
@@ -149,6 +151,7 @@ def train():
     
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=Config.lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=Config.patience)
     
     best_val_loss = float('inf')
     
@@ -206,6 +209,9 @@ def train():
             "val_acc": val_acc,
             "lr": current_lr
         })
+        
+        # 스케줄러 업데이트 (train_loss 기준)
+        scheduler.step(train_loss)
         
         # 성능이 개선되면 모델 저장
         if val_loss < best_val_loss:
@@ -267,9 +273,11 @@ def inference():
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Mosquito Flight Trajectory GRU Training")
+    parser = argparse.ArgumentParser(description="Mosquito Flight Trajectory GRU Training/Inference")
     parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cpu', 'gpu'], 
                         help="Device to run on: 'auto' (default), 'cpu', or 'gpu'")
+    parser.add_argument('--mode', type=str, default='all', choices=['train', 'infer', 'all'],
+                        help="Mode to run: 'train', 'infer', or 'all' (default)")
     args = parser.parse_args()
 
     # 디바이스 설정
@@ -284,8 +292,11 @@ if __name__ == '__main__':
     else:
         Config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    print("--- Starting GRU Training ---")
-    train()
-    print("\n--- Starting Inference ---")
-    inference()
+    if args.mode in ['train', 'all']:
+        print("--- Starting GRU Training ---")
+        train()
+        
+    if args.mode in ['infer', 'all']:
+        print("\n--- Starting Inference ---")
+        inference()
 
