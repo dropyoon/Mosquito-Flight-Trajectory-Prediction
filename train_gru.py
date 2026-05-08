@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+import wandb
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from tqdm import tqdm
@@ -24,9 +25,9 @@ class Config:
     output_size = 3   # 예측할 x, y, z
     
     # 학습 설정
-    batch_size = 128
-    epochs = 30
-    lr = 0.001
+    batch_size = 64
+    epochs = 300
+    lr = 0.00001
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ==========================================
@@ -110,6 +111,20 @@ class MosquitoGRU(nn.Module):
 def train():
     print(f"Using device: {Config.device}")
     
+    # wandb 초기화
+    wandb.init(
+        project="DACON-2605-Mosquito",
+        name="GRU",
+        config={
+            "input_size": Config.input_size,
+            "hidden_size": Config.hidden_size,
+            "num_layers": Config.num_layers,
+            "batch_size": Config.batch_size,
+            "epochs": Config.epochs,
+            "lr": Config.lr
+        }
+    )
+    
     # 파일 및 라벨 불러오기
     train_files = sorted(list(Config.train_dir.glob('TRAIN_*.csv')))
     train_labels = pd.read_csv(Config.train_labels_path)
@@ -140,6 +155,7 @@ def train():
     for epoch in range(Config.epochs):
         model.train()
         train_loss = 0.0
+        train_correct = 0
         
         for seq, target in train_loader:
             seq, target = seq.to(Config.device), target.to(Config.device)
@@ -152,11 +168,17 @@ def train():
             
             train_loss += loss.item() * seq.size(0)
             
+            # 예측값과 실제값의 거리 계산 (0.01m 이하인 경우 정답)
+            distances = torch.linalg.norm(outputs - target, dim=1)
+            train_correct += (distances <= 0.01).sum().item()
+            
         train_loss /= len(train_loader.dataset)
+        train_acc = train_correct / len(train_loader.dataset)
         
         # 검증
         model.eval()
         val_loss = 0.0
+        val_correct = 0
         with torch.no_grad():
             for seq, target in val_loader:
                 seq, target = seq.to(Config.device), target.to(Config.device)
@@ -164,15 +186,34 @@ def train():
                 loss = criterion(outputs, target)
                 val_loss += loss.item() * seq.size(0)
                 
+                # 예측값과 실제값의 거리 계산 (0.01m 이하인 경우 정답)
+                distances = torch.linalg.norm(outputs - target, dim=1)
+                val_correct += (distances <= 0.01).sum().item()
+                
         val_loss /= len(val_loader.dataset)
+        val_acc = val_correct / len(val_loader.dataset)
         
-        print(f"Epoch [{epoch+1}/{Config.epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        # 현재 학습률 가져오기
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch [{epoch+1}/{Config.epochs}], LR: {current_lr:.6f}, Train Loss: {train_loss:.6f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.6f}, Val Acc: {val_acc:.4f}")
+        
+        # wandb 로깅
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "train_acc": train_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
+            "lr": current_lr
+        })
         
         # 성능이 개선되면 모델 저장
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'best_gru_model.pth')
             print("  --> Saved best model")
+            
+    wandb.finish()
 
 # ==========================================
 # 5. Inference / Prediction (추론 루프)
