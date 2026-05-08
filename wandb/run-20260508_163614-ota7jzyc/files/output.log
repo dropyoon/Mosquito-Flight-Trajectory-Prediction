@@ -1,0 +1,32 @@
+캐시 로드: data/.cache/8000_TRAIN_09255_TRAIN_07271.npz
+캐시 로드: data/.cache/2000_TRAIN_06253_TRAIN_06930.npz
+Epoch [1/100] Train Loss: 0.002447  Val Loss: 0.000387 | Train Dist: 0.0698  Val Dist: 0.0285 | Train Acc: 0.0421  Val Acc: 0.0970
+  --> Saved best model
+Epoch [2/100] Train Loss: 0.000367  Val Loss: 0.000349 | Train Dist: 0.0274  Val Dist: 0.0262 | Train Acc: 0.1634  Val Acc: 0.1770
+  --> Saved best model
+Epoch [3/100] Train Loss: 0.000347  Val Loss: 0.000332 | Train Dist: 0.0266  Val Dist: 0.0257 | Train Acc: 0.1741  Val Acc: 0.1735
+  --> Saved best model
+Epoch [4/100] Train Loss: 0.000328  Val Loss: 0.000312 | Train Dist: 0.0258  Val Dist: 0.0249 | Train Acc: 0.1847  Val Acc: 0.1790
+  --> Saved best model
+Epoch [5/100] Train Loss: 0.000306  Val Loss: 0.000287 | Train Dist: 0.0248  Val Dist: 0.0236 | Train Acc: 0.1924  Val Acc: 0.2010
+  --> Saved best model
+Epoch [6/100] Train Loss: 0.000278  Val Loss: 0.000258 | Train Dist: 0.0235  Val Dist: 0.0223 | Train Acc: 0.2029  Val Acc: 0.2085
+  --> Saved best model
+Epoch [7/100] Train Loss: 0.000245  Val Loss: 0.000225 | Train Dist: 0.0218  Val Dist: 0.0202 | Train Acc: 0.2218  Val Acc: 0.2450
+  --> Saved best model
+Epoch [8/100] Train Loss: 0.000216  Val Loss: 0.000203 | Train Dist: 0.0199  Val Dist: 0.0186 | Train Acc: 0.2540  Val Acc: 0.2870
+  --> Saved best model
+Epoch [9/100] Train Loss: 0.000201  Val Loss: 0.000195 | Train Dist: 0.0185  Val Dist: 0.0174 | Train Acc: 0.3016  Val Acc: 0.3810
+  --> Saved best model
+Traceback (most recent call last):
+  File "/Users/yoonjimin/Desktop/대학교/3-1/모기/open/Mosquito-Flight-Trajectory-Prediction/train_gru.py", line 354, in <module>
+    train()
+  File "/Users/yoonjimin/Desktop/대학교/3-1/모기/open/Mosquito-Flight-Trajectory-Prediction/train_gru.py", line 209, in train
+    loss.backward()
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/torch/_tensor.py", line 581, in backward
+    torch.autograd.backward(
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/torch/autograd/__init__.py", line 347, in backward
+    _engine_run_backward(
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/torch/autograd/graph.py", line 825, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+KeyboardInterrupt

@@ -7,6 +7,11 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+<<<<<<< Updated upstream
+=======
+import wandb
+from augmentation import get_rotation_matrix
+>>>>>>> Stashed changes
 
 # ==========================================
 # 1. Configuration (하이퍼파라미터 및 경로 설정)
@@ -25,16 +30,24 @@ class Config:
     output_size = 3   # 예측할 x, y, z
     
     # 학습 설정
+<<<<<<< Updated upstream
     batch_size = 64
     epochs = 600
     lr = 5e-4
     patience = 20
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+=======
+    batch_size = 128
+    epochs = 600
+    lr = 0.0001
+    device = torch.device('cpu')
+>>>>>>> Stashed changes
 
 # ==========================================
 # 2. Dataset Definition (데이터 로더 정의)
 # ==========================================
 class MosquitoDataset(Dataset):
+<<<<<<< Updated upstream
     def __init__(self, file_paths, labels_df=None, is_train=True):
         self.file_paths = file_paths
         self.is_train = is_train
@@ -65,6 +78,64 @@ class MosquitoDataset(Dataset):
                 target_pos = np.array(labels_dict[fid], dtype=np.float32)
                 target_norm = target_pos - last_pos # 목표 위치까지의 변위
                 self.targets.append(target_norm)
+=======
+    _cache_dir = Path('./data/.cache')
+
+    def __init__(self, file_paths, labels_df=None, is_train=True, augment_fns=None):
+        self.is_train = is_train
+        self.augment_fns = augment_fns or []
+
+        # ── 1. raw sequences 로드 (캐시 우선) ──────────────────────────
+        self._cache_dir.mkdir(exist_ok=True)
+        cache_key = f"{len(file_paths)}_{file_paths[0].stem}_{file_paths[-1].stem}"
+        cache_file = self._cache_dir / f"{cache_key}.npz"
+
+        if cache_file.exists():
+            print(f"캐시 로드: {cache_file}")
+            data = np.load(cache_file, allow_pickle=True)
+            raw = data['sequences']               # (N, T, 3)
+            self.file_ids = data['file_ids'].tolist()
+        else:
+            # pd.read_csv 대신 np.loadtxt 사용 (파일당 ~10배 빠름)
+            raw_list, file_ids = [], []
+            for path in tqdm(file_paths, desc="Loading data"):
+                seq = np.loadtxt(path, delimiter=',', skiprows=1,
+                                 usecols=(1, 2, 3), dtype=np.float32)
+                raw_list.append(seq)
+                file_ids.append(path.stem)
+            raw = np.stack(raw_list)              # (N, T, 3)
+            np.savez(cache_file, sequences=raw, file_ids=np.array(file_ids))
+            print(f"캐시 저장 완료: {cache_file}")
+            self.file_ids = file_ids
+
+        # ── 2. 정규화: 마지막 좌표를 원점으로 → 진행방향 x축 정렬 ──
+        last_positions = raw[:, -1, :]                            # (N, 3)
+        sequences_translated = (raw - last_positions[:, np.newaxis, :]).astype(np.float32)
+
+        # 샘플별 회전행렬 계산 후 시퀀스에 적용
+        # sequences_translated[n] @ R[n].T  →  einsum 'ntj,nij->nti'
+        rot_mats = np.array(
+            [get_rotation_matrix(seq) for seq in sequences_translated], dtype=np.float32
+        )                                                         # (N, 3, 3)
+        sequences_norm = np.einsum('ntj,nij->nti', sequences_translated, rot_mats).astype(np.float32)
+
+        self.sequences = list(sequences_norm)
+        self.last_positions = list(last_positions.astype(np.float32))
+        self.rot_mats = list(rot_mats)                            # 추론 시 역회전에 사용
+
+        # ── 3. 라벨 처리 ────────────────────────────────────────────────
+        if is_train and labels_df is not None:
+            labels_dict = labels_df.set_index('id')[['x', 'y', 'z']].to_dict('index')
+            target_array = np.array(
+                [[labels_dict[fid]['x'], labels_dict[fid]['y'], labels_dict[fid]['z']]
+                 for fid in self.file_ids], dtype=np.float32
+            )
+            target_displaced = (target_array - last_positions).astype(np.float32)  # (N, 3)
+            # 시퀀스와 동일한 R로 타겟도 회전해야 좌표계가 일치함
+            # target_displaced[n] @ R[n].T  →  einsum 'nj,nij->ni'
+            target_rotated = np.einsum('nj,nij->ni', target_displaced, rot_mats).astype(np.float32)
+            self.targets = list(target_rotated)
+>>>>>>> Stashed changes
 
     def __len__(self):
         return len(self.sequences)
@@ -76,8 +147,9 @@ class MosquitoDataset(Dataset):
             return seq, target
         else:
             last_pos = torch.tensor(self.last_positions[idx])
+            rot_mat = torch.tensor(self.rot_mats[idx])  # (3, 3) — 역회전용
             file_id = self.file_ids[idx]
-            return seq, last_pos, file_id
+            return seq, last_pos, rot_mat, file_id
 
 # ==========================================
 # 3. Model Definition (GRU 모델 정의)
@@ -111,6 +183,7 @@ class MosquitoGRU(nn.Module):
 # ==========================================
 def train():
     print(f"Using device: {Config.device}")
+<<<<<<< Updated upstream
     
     # wandb 초기화
     wandb.init(
@@ -127,6 +200,24 @@ def train():
         }
     )
     
+=======
+
+    wandb.init(
+        project="mosquito-trajectory",
+        config={
+            "model":       "GRU",
+            "input_size":  Config.input_size,
+            "hidden_size": Config.hidden_size,
+            "num_layers":  Config.num_layers,
+            "output_size": Config.output_size,
+            "batch_size":  Config.batch_size,
+            "epochs":      Config.epochs,
+            "lr":          Config.lr,
+            "device":      str(Config.device),
+        },
+    )
+
+>>>>>>> Stashed changes
     # 파일 및 라벨 불러오기
     train_files = sorted(list(Config.train_dir.glob('TRAIN_*.csv')))
     train_labels = pd.read_csv(Config.train_labels_path)
@@ -134,8 +225,18 @@ def train():
     # 검증셋 분리 (8:2)
     train_files, val_files = train_test_split(train_files, test_size=0.2, random_state=42)
     
+<<<<<<< Updated upstream
     # 데이터 로더 생성
     train_dataset = MosquitoDataset(train_files, train_labels, is_train=True)
+=======
+    # 학습에 적용할 augmentation 함수 목록 (원하는 함수를 추가/제거)
+    augment_fns = [
+        # translate_last_to_origin,
+    ]
+
+    # 데이터 로더 생성 (검증셋은 augmentation 없이)
+    train_dataset = MosquitoDataset(train_files, train_labels, is_train=True, augment_fns=augment_fns)
+>>>>>>> Stashed changes
     val_dataset = MosquitoDataset(val_files, train_labels, is_train=True)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.batch_size, shuffle=True)
@@ -153,23 +254,32 @@ def train():
     optimizer = torch.optim.Adam(model.parameters(), lr=Config.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=Config.patience)
     
+    ACC_THRESHOLD = 0.01  # 정답 인정 거리 기준 (m)
     best_val_loss = float('inf')
-    
+
     for epoch in range(Config.epochs):
         model.train()
         train_loss = 0.0
+<<<<<<< Updated upstream
         train_correct = 0
         
+=======
+        train_dist = 0.0
+        train_correct = 0
+
+>>>>>>> Stashed changes
         for seq, target in train_loader:
             seq, target = seq.to(Config.device), target.to(Config.device)
-            
+
             optimizer.zero_grad()
             outputs = model(seq)
             loss = criterion(outputs, target)
             loss.backward()
             optimizer.step()
-            
+
+            dists = torch.norm(outputs.detach() - target, dim=1)
             train_loss += loss.item() * seq.size(0)
+<<<<<<< Updated upstream
             
             # 예측값과 실제값의 거리 계산 (0.01m 이하인 경우 정답)
             distances = torch.linalg.norm(outputs - target, dim=1)
@@ -181,13 +291,29 @@ def train():
         # 검증
         model.eval()
         val_loss = 0.0
+=======
+            train_dist += dists.sum().item()
+            train_correct += (dists < ACC_THRESHOLD).sum().item()
+
+        n_train = len(train_loader.dataset)
+        train_loss /= n_train
+        train_dist /= n_train
+        train_acc = train_correct / n_train
+
+        # 검증
+        model.eval()
+        val_loss = 0.0
+        val_dist = 0.0
+>>>>>>> Stashed changes
         val_correct = 0
         with torch.no_grad():
             for seq, target in val_loader:
                 seq, target = seq.to(Config.device), target.to(Config.device)
                 outputs = model(seq)
                 loss = criterion(outputs, target)
+                dists = torch.norm(outputs - target, dim=1)
                 val_loss += loss.item() * seq.size(0)
+<<<<<<< Updated upstream
                 
                 # 예측값과 실제값의 거리 계산 (0.01m 이하인 경우 정답)
                 distances = torch.linalg.norm(outputs - target, dim=1)
@@ -213,12 +339,44 @@ def train():
         # 스케줄러 업데이트 (train_loss 기준)
         scheduler.step(train_loss)
         
+=======
+                val_dist += dists.sum().item()
+                val_correct += (dists < ACC_THRESHOLD).sum().item()
+
+        n_val = len(val_loader.dataset)
+        val_loss /= n_val
+        val_dist /= n_val
+        val_acc = val_correct / n_val
+
+        print(f"Epoch [{epoch+1}/{Config.epochs}] "
+              f"Train Loss: {train_loss:.6f}  Val Loss: {val_loss:.6f} | "
+              f"Train Dist: {train_dist:.4f}  Val Dist: {val_dist:.4f} | "
+              f"Train Acc: {train_acc:.4f}  Val Acc: {val_acc:.4f}")
+
+        wandb.log({
+            "epoch":      epoch + 1,
+            "train/loss": train_loss,
+            "train/dist": train_dist,
+            "train/acc":  train_acc,
+            "val/loss":   val_loss,
+            "val/dist":   val_dist,
+            "val/acc":    val_acc,
+        })
+
+>>>>>>> Stashed changes
         # 성능이 개선되면 모델 저장
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'best_gru_model.pth')
             print("  --> Saved best model")
+<<<<<<< Updated upstream
             
+=======
+            wandb.summary["best_val_loss"] = best_val_loss
+            wandb.summary["best_val_dist"] = val_dist
+            wandb.summary["best_val_acc"]  = val_acc
+
+>>>>>>> Stashed changes
     wandb.finish()
 
 # ==========================================
@@ -244,13 +402,18 @@ def inference():
     predictions = []
     
     with torch.no_grad():
-        for seq, last_pos, file_ids in test_loader:
+        for seq, last_pos, rot_mat, file_ids in test_loader:
             seq = seq.to(Config.device)
-            
-            # 상대적인 변위 예측
-            pred_displacement = model(seq).cpu().numpy()
-            
-            # 최종 예측 위치 = 0ms 위치 + 예측 변위
+
+            # 회전 공간에서 변위 예측
+            pred_rotated = model(seq).cpu()  # (B, 3)
+
+            # 역회전: pred @ R  (학습 시 target @ R.T 로 변환했으므로 R.T의 역행렬 = R)
+            pred_displacement = torch.bmm(
+                pred_rotated.unsqueeze(1), rot_mat
+            ).squeeze(1).numpy()  # (B, 3)
+
+            # 최종 예측 위치 = 0ms 위치 + 역회전된 변위
             last_pos_np = last_pos.numpy()
             pred_pos = last_pos_np + pred_displacement
             
