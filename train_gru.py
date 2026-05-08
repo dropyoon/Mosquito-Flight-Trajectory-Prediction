@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+from augmentation import translate_last_to_origin
 
 # ==========================================
 # 1. Configuration (하이퍼파라미터 및 경로 설정)
@@ -33,24 +34,25 @@ class Config:
 # 2. Dataset Definition (데이터 로더 정의)
 # ==========================================
 class MosquitoDataset(Dataset):
-    def __init__(self, file_paths, labels_df=None, is_train=True):
+    def __init__(self, file_paths, labels_df=None, is_train=True, augment_fns=None):
         self.file_paths = file_paths
         self.is_train = is_train
-        
+        self.augment_fns = augment_fns or []
+
         self.sequences = []
         self.last_positions = []
         self.file_ids = []
-        
+
         # 파일별로 데이터를 읽어 메모리에 적재
         for path in tqdm(file_paths, desc="Loading data"):
             df = pd.read_csv(path)
             # Shape: (11, 3) -> 11 timesteps (-400ms to 0ms)
             seq = df[['x', 'y', 'z']].values.astype(np.float32)
-            
-            # 모델의 학습 효율을 높이기 위해 마지막 위치(0ms)를 기준으로 상대 위치(변위)로 변환
+
+            # 마지막 위치(0ms)를 원점으로 평행이동
             last_pos = seq[-1].copy()
-            seq_norm = seq - last_pos
-            
+            seq_norm = translate_last_to_origin(seq)
+
             self.sequences.append(seq_norm)
             self.last_positions.append(last_pos)
             self.file_ids.append(path.stem)
@@ -68,7 +70,14 @@ class MosquitoDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, idx):
-        seq = torch.tensor(self.sequences[idx])
+        seq = self.sequences[idx].copy()
+
+        # 학습 시에만 추가 augmentation 적용
+        if self.is_train:
+            for fn in self.augment_fns:
+                seq = fn(seq)
+
+        seq = torch.tensor(seq)
         if self.is_train:
             target = torch.tensor(self.targets[idx])
             return seq, target
@@ -117,8 +126,13 @@ def train():
     # 검증셋 분리 (8:2)
     train_files, val_files = train_test_split(train_files, test_size=0.2, random_state=42)
     
-    # 데이터 로더 생성
-    train_dataset = MosquitoDataset(train_files, train_labels, is_train=True)
+    # 학습에 적용할 augmentation 함수 목록 (원하는 함수를 추가/제거)
+    augment_fns = [
+        translate_last_to_origin,
+    ]
+
+    # 데이터 로더 생성 (검증셋은 augmentation 없이)
+    train_dataset = MosquitoDataset(train_files, train_labels, is_train=True, augment_fns=augment_fns)
     val_dataset = MosquitoDataset(val_files, train_labels, is_train=True)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.batch_size, shuffle=True)
@@ -227,8 +241,8 @@ def inference():
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Mosquito Flight Trajectory GRU Training")
-    parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cpu', 'gpu'], 
-                        help="Device to run on: 'auto' (default), 'cpu', or 'gpu'")
+    parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cpu', 'gpu', 'mps'],
+                        help="Device to run on: 'auto' (default), 'cpu', 'gpu' (CUDA), or 'mps' (Mac GPU)")
     args = parser.parse_args()
 
     # 디바이스 설정
@@ -238,10 +252,21 @@ if __name__ == '__main__':
         if torch.cuda.is_available():
             Config.device = torch.device('cuda')
         else:
-            print("Warning: GPU requested but not available. Falling back to CPU.")
+            print("Warning: CUDA GPU not available. Falling back to CPU.")
             Config.device = torch.device('cpu')
-    else:
-        Config.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    elif args.device == 'mps':
+        if torch.backends.mps.is_available():
+            Config.device = torch.device('mps')
+        else:
+            print("Warning: MPS not available. Falling back to CPU.")
+            Config.device = torch.device('cpu')
+    else:  # auto
+        if torch.cuda.is_available():
+            Config.device = torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            Config.device = torch.device('mps')
+        else:
+            Config.device = torch.device('cpu')
 
     print("--- Starting GRU Training ---")
     train()

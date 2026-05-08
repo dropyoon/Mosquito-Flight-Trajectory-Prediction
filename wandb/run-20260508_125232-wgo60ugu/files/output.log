@@ -1,0 +1,24 @@
+Loading data:   0%|▎                                                                                              | 23/8000 [02:33<14:45:03,  6.66s/it]
+Traceback (most recent call last):
+  File "/Users/yoonjimin/Desktop/대학교/3-1/모기/open/Mosquito-Flight-Trajectory-Prediction/train_gru.py", line 318, in <module>
+    train()
+  File "/Users/yoonjimin/Desktop/대학교/3-1/모기/open/Mosquito-Flight-Trajectory-Prediction/train_gru.py", line 155, in train
+    train_dataset = MosquitoDataset(train_files, train_labels, is_train=True, augment_fns=augment_fns)
+  File "/Users/yoonjimin/Desktop/대학교/3-1/모기/open/Mosquito-Flight-Trajectory-Prediction/train_gru.py", line 54, in __init__
+    df = pd.read_csv(path)
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 620, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1620, in __init__
+    self._engine = self._make_engine(f, self.engine)
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1898, in _make_engine
+    return mapping[engine](f, **self.options)
+  File "/opt/anaconda3/envs/DACON-2605/lib/python3.10/site-packages/pandas/io/parsers/c_parser_wrapper.py", line 93, in __init__
+    self._reader = parsers.TextReader(src, **kwds)
+  File "pandas/_libs/parsers.pyx", line 574, in pandas._libs.parsers.TextReader.__cinit__
+  File "pandas/_libs/parsers.pyx", line 663, in pandas._libs.parsers.TextReader._get_header
+  File "pandas/_libs/parsers.pyx", line 874, in pandas._libs.parsers.TextReader._tokenize_rows
+  File "pandas/_libs/parsers.pyx", line 891, in pandas._libs.parsers.TextReader._check_tokenize_status
+  File "pandas/_libs/parsers.pyx", line 2061, in pandas._libs.parsers.raise_parser_error
+pandas.errors.ParserError: Error tokenizing data. C error: Calling read(nbytes) on source failed. Try engine='python'.
