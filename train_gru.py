@@ -35,8 +35,8 @@ class Config:
     
     # 모델 하이퍼파라미터
     input_size = 3    # x, y, z  (delta 모드에서도 feature dim은 동일)
-    hidden_size = 32
-    num_layers = 2
+    hidden_size = 64
+    num_layers = 4
     output_size = 3   # 예측할 x, y, z
 
     # 입력 설정 (argparse로 덮어씀)
