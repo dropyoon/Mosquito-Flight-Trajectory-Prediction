@@ -86,6 +86,18 @@ def get_rotation_matrix(coords: np.ndarray) -> np.ndarray:
     return R.astype(np.float32)
 
 
+def to_displacement_vectors(coords: np.ndarray) -> np.ndarray:
+    """Convert a coordinate sequence to consecutive displacement vectors.
+
+    Args:
+        coords: Array of shape (T, 3) with columns [x, y, z].
+
+    Returns:
+        Array of shape (T-1, 3) where row t is coords[t+1] - coords[t].
+    """
+    return np.diff(coords, axis=0).astype(coords.dtype)
+
+
 def normalize_rotation(coords: np.ndarray) -> np.ndarray:
     """Rotate trajectory so that the last step direction aligns with the x-axis.
 
