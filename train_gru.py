@@ -35,8 +35,8 @@ class Config:
     
     # 모델 하이퍼파라미터
     input_size = 3    # x, y, z  (delta 모드에서도 feature dim은 동일)
-    hidden_size = 32
-    num_layers = 2
+    hidden_size = 64
+    num_layers = 4
     output_size = 3   # 예측할 x, y, z
 
     # 입력 설정 (argparse로 덮어씀)
@@ -49,7 +49,7 @@ class Config:
     lr = 0.0001
     min_lr = 1e-6          # LR 하한선 설정
     scheduler_factor = 0.5 # 감쇠 폭 완화 (0.1 -> 0.5)
-    patience = 40          
+    patience = 50          
     warmup_epochs = 10     # 초기 Warm-up 에폭 수
     seed = 42
     run_name = "GRU"  # wandb 실행 이름
@@ -252,7 +252,7 @@ def train():
     # 모델 가중치 및 기울기 로그 기록 설정
     wandb.watch(model, log='all', log_freq=100)
     
-    criterion = WingLoss(w=0.05, epsilon=0.01)
+    criterion = WingLoss(w=0.03, epsilon=0.005)
     optimizer = torch.optim.Adam(model.parameters(), lr=Config.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, 
