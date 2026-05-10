@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from augmentation import get_rotation_matrix
 import random
 import os
+import math
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -34,7 +35,7 @@ class Config:
     
     # 모델 하이퍼파라미터
     input_size = 3    # x, y, z  (delta 모드에서도 feature dim은 동일)
-    hidden_size = 64
+    hidden_size = 32
     num_layers = 2
     output_size = 3   # 예측할 x, y, z
 
@@ -46,7 +47,10 @@ class Config:
     batch_size = 128
     epochs = 600
     lr = 0.0001
-    patience = 20
+    min_lr = 1e-6          # LR 하한선 설정
+    scheduler_factor = 0.5 # 감쇠 폭 완화 (0.1 -> 0.5)
+    patience = 40          
+    warmup_epochs = 10     # 초기 Warm-up 에폭 수
     seed = 42
     run_name = "GRU"  # wandb 실행 이름
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -171,6 +175,22 @@ class MosquitoGRU(nn.Module):
         out = self.fc(out)
         return out
 
+class WingLoss(nn.Module):
+    def __init__(self, w=0.05, epsilon=0.01):
+        super(WingLoss, self).__init__()
+        self.w = w
+        self.epsilon = epsilon
+        self.c = w - w * math.log(1.0 + w / epsilon)
+
+    def forward(self, y_pred, y_true):
+        x = torch.abs(y_pred - y_true)
+        loss = torch.where(
+            x < self.w,
+            self.w * torch.log(1.0 + x / self.epsilon),
+            x - self.c
+        )
+        return loss.mean()
+
 # ==========================================
 # 4. Training Loop (학습 루프)
 # ==========================================
@@ -193,6 +213,7 @@ def train():
             "device":       str(Config.device),
             "use_delta":    Config.use_delta,
             "use_rotation": Config.use_rotation,
+            "patience":     Config.patience,
         },
     )
 
@@ -228,15 +249,31 @@ def train():
         output_size=Config.output_size
     ).to(Config.device)
     
-    criterion = nn.MSELoss()
+    # 모델 가중치 및 기울기 로그 기록 설정
+    wandb.watch(model, log='all', log_freq=100)
+    
+    criterion = WingLoss(w=0.05, epsilon=0.01)
     optimizer = torch.optim.Adam(model.parameters(), lr=Config.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=Config.patience)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, 
+        mode='min', 
+        factor=Config.scheduler_factor, 
+        patience=Config.patience,
+        min_lr=Config.min_lr
+    )
     
     ACC_THRESHOLD = 0.01  # 정답 인정 거리 기준 (m)
     best_val_loss = float('inf')
     best_val_dist_total = float('inf')
+    best_epoch = 0
 
     for epoch in range(Config.epochs):
+        # ── 1. Warm-up 전략 적용 ──────────────────────────────────────
+        if epoch < Config.warmup_epochs:
+            curr_lr = Config.lr * (epoch + 1) / Config.warmup_epochs
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = curr_lr
+        
         model.train()
         train_loss = 0.0
         train_dist = 0.0
@@ -297,34 +334,40 @@ def train():
             "learning_rate": optimizer.param_groups[0]['lr'],
         })
 
-        # 스케줄러 업데이트
-        scheduler.step(val_loss)
+        # 스케줄러 업데이트 (Warm-up 이후에만 작동하도록 설정 가능)
+        if epoch >= Config.warmup_epochs:
+            scheduler.step(val_loss)
 
-        # 성능이 개선되면 모델 저장
+        # 성능이 개선되면 모델 저장 (임시 저장)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_val_dist_total = val_dist
+            best_epoch = epoch + 1
             
-            # 폴더 생성 및 모델 저장
             Path('model').mkdir(exist_ok=True)
-            model_path = f'model/gru_{best_val_dist_total:.4f}.pth'
-            torch.save(model.state_dict(), model_path)
-            # 추론을 위해 가장 최근의 베스트 모델도 저장
-            torch.save(model.state_dict(), 'best_gru_model.pth')
+            # 중간에 꺼질 수 있으므로 임시 파일로 계속 갱신
+            torch.save(model.state_dict(), 'model/best_model_tmp.pth')
             
-            print(f"  --> Saved best model to {model_path}")
+            print(f"  --> Updated best model (Epoch {best_epoch}, Loss: {best_val_loss:.6f})")
             wandb.summary["best_val_loss"] = best_val_loss
             wandb.summary["best_val_dist"] = best_val_dist_total
             wandb.summary["best_val_acc"]  = val_acc
-            wandb.summary["best_epoch"]    = epoch + 1
+            wandb.summary["best_epoch"]    = best_epoch
+            wandb.summary["patience"]      = Config.patience
+
+    # 학습 종료 후 최종 파일명으로 변경 (Dist값과 에폭 포함)
+    if best_epoch > 0:
+        final_model_path = f'model/gru_{best_val_dist_total:.4f}_{best_epoch}.pth'
+        os.rename('model/best_model_tmp.pth', final_model_path)
+        print(f"\nTraining complete. Final best model saved to: {final_model_path}")
 
     wandb.finish()
-    return best_val_dist_total
+    return best_val_dist_total, best_epoch
 
 # ==========================================
 # 5. Inference / Prediction (추론 루프)
 # ==========================================
-def inference(best_val_dist=None):
+def inference(best_val_dist=None, best_epoch=None):
     # 저장된 베스트 모델 불러오기
     model = MosquitoGRU(
         input_size=Config.input_size, 
@@ -333,11 +376,26 @@ def inference(best_val_dist=None):
         output_size=Config.output_size
     ).to(Config.device)
     
-    if best_val_dist is not None:
-        model_path = f'model/gru_{best_val_dist:.4f}.pth'
+    if best_epoch is not None and best_val_dist is not None:
+        # train()에서 반환받은 Dist와 Epoch으로 정확한 매칭
+        model_path = f'model/gru_{best_val_dist:.4f}_{best_epoch}.pth'
     else:
-        model_path = 'best_gru_model.pth'
+        # 특정 파일이 지정되지 않은 경우 model 폴더에서 가장 성능이 좋은(Dist가 낮은) 파일 검색
+        save_files = list(Path('model').glob('gru_*_*.pth'))
+        if not save_files:
+            raise FileNotFoundError("학습된 모델 파일을 찾을 수 없습니다. (model/gru_*.pth)")
         
+        # 파일명 형식: gru_{dist}_{epoch}.pth -> dist(두 번째 요소)가 가장 작은 것 선택
+        def get_dist(path):
+            try:
+                # 0.0123 같은 실수값 추출
+                return float(path.stem.split('_')[1])
+            except:
+                return float('inf')
+        
+        model_path = sorted(save_files, key=get_dist)[0]
+        
+    print(f"Loading model from: {model_path}")
     model.load_state_dict(torch.load(model_path))
     model.eval()
     
@@ -435,11 +493,11 @@ if __name__ == '__main__':
         else:
             Config.device = torch.device('cpu')
 
-    best_dist = None
+    best_dist, best_epoch = None, None
     if args.mode in ['train', 'all']:
         print("--- Starting GRU Training ---")
-        best_dist = train()
+        best_dist, best_epoch = train()
         
     if args.mode in ['infer', 'all']:
         print("\n--- Starting Inference ---")
-        inference(best_dist)
+        inference(best_dist, best_epoch)

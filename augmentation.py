@@ -115,22 +115,19 @@ def compute_velocity_acceleration(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute velocity and acceleration features from coordinate trajectory.
 
-    Uses forward differences; boundary values are repeated to preserve shape (T, 3).
+    Uses forward differences. Note that differentiation reduces sequence length.
 
     Args:
         coords: Array of shape (T, 3) with columns [x, y, z].
         dt: Time step between consecutive samples in seconds (default 1.0).
 
     Returns:
-        Tuple of (velocity, acceleration), each of shape (T, 3).
+        Tuple of (velocity, acceleration):
+            - velocity: shape (T-1, 3)
+            - acceleration: shape (T-2, 3)
     """
-    velocity = np.zeros_like(coords)
-    velocity[:-1] = np.diff(coords, axis=0) / dt
-    velocity[-1] = velocity[-2]
-
-    acceleration = np.zeros_like(coords)
-    acceleration[:-1] = np.diff(velocity, axis=0) / dt
-    acceleration[-1] = acceleration[-2]
+    velocity = np.diff(coords, axis=0) / dt
+    acceleration = np.diff(velocity, axis=0) / dt
 
     return velocity, acceleration
 
