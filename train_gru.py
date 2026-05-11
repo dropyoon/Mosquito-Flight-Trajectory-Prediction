@@ -36,14 +36,14 @@ class Config:
     # 모델 하이퍼파라미터
     input_size = 3    # x, y, z  (delta 모드에서도 feature dim은 동일)
     hidden_size = 64
-    num_layers = 4
+    num_layers = 2
     output_size = 3   # 예측할 x, y, z
     dropout_rate = 0.2
 
     # 입력 설정 (argparse로 덮어씀)
     use_delta    = False  # --input delta: 11 coords → 10 displacement vectors
     use_rotation = True   # --no-rotate: 회전 정규화 비활성화
-    seq_len      = None   # --seq-len N: 최근 N개 타임스텝만 사용 (None = 전체)
+    max_len      = None   # --max-len N: sub-seq의 최대 점 개수 (None = 길이 제한 없음)
 
     # 학습 설정
     batch_size = 128
@@ -64,11 +64,7 @@ class MosquitoDataset(Dataset):
     _cache_dir = Path('./data/.cache')
 
     def __init__(self, file_paths, labels_df=None, is_train=True, augment_fns=None,
-<<<<<<< HEAD
-                 use_delta=False, use_rotation=True, seq_len=None):
-=======
-                 use_delta=False, use_rotation=True, subseq_aug=False):
->>>>>>> test
+                 use_delta=False, use_rotation=True, subseq_aug=False, max_len=None):
         self.is_train = is_train
         self.augment_fns = augment_fns if augment_fns is not None else []
         self.subseq_aug = subseq_aug
@@ -120,47 +116,53 @@ class MosquitoDataset(Dataset):
         if is_train and original_targets is not None and self.subseq_aug:
             aug_raw = []
             aug_targets = []
-            
+
+            # max_len=N: sub-seq 길이(점 기준) 최대 N. None이면 제한 없음
             for seq_idx, seq in enumerate(raw):
                 orig_target = original_targets[seq_idx]
-                
+
                 # 1. Forward sub-sequences (정방향 서브시퀀스)
-                for end_idx in range(1, 11):
+                # 최솟값: 3점(벡터 2개) → end_idx - start_idx >= 2
+                for end_idx in range(2, 11):
                     if end_idx == 9:
-                        continue # +40ms target is unknown
-                        
+                        continue  # +40ms target is unknown
+
                     if end_idx == 10:
                         target = orig_target
                     else:
                         target = seq[end_idx + 2]
-                        
-                    for start_idx in range(0, end_idx): # len >= 2
-                        sub_seq = seq[start_idx:end_idx+1]
-                        
+
+                    # start_idx 하한: max_len 제한 시 end_idx - max_len + 1
+                    min_start = max(0, end_idx - max_len + 1) if max_len is not None else 0
+                    for start_idx in range(min_start, end_idx - 1):  # len >= 3
+                        sub_seq = seq[start_idx:end_idx + 1]
+
                         pad_len = 11 - len(sub_seq)
                         if pad_len > 0:
                             padded_seq = np.vstack([np.tile(sub_seq[0], (pad_len, 1)), sub_seq])
                         else:
                             padded_seq = sub_seq
-                            
+
                         aug_raw.append(padded_seq)
                         aug_targets.append(target)
-                        
+
                 # 2. Reverse sub-sequences (역방향 서브시퀀스)
                 # 예를 들어 -120(idx:7), -160(idx:6), -200(idx:5)을 보고 -280(idx:3)을 예측
+                # 최솟값: 3점(벡터 2개) → end_idx - start_idx >= 2
                 for start_idx in range(2, 11):
                     target = seq[start_idx - 2]
-                    
-                    for end_idx in range(start_idx + 1, 11): # len >= 2
-                        # 역방향으로 진행하는 시퀀스 추출
-                        sub_seq = seq[start_idx:end_idx+1][::-1]
-                        
+
+                    # end_idx 상한: max_len 제한 시 start_idx + max_len - 1
+                    max_end = min(10, start_idx + max_len - 1) if max_len is not None else 10
+                    for end_idx in range(start_idx + 2, max_end + 1):  # len >= 3
+                        sub_seq = seq[start_idx:end_idx + 1][::-1]
+
                         pad_len = 11 - len(sub_seq)
                         if pad_len > 0:
                             padded_seq = np.vstack([np.tile(sub_seq[0], (pad_len, 1)), sub_seq])
                         else:
                             padded_seq = sub_seq
-                            
+
                         aug_raw.append(padded_seq)
                         aug_targets.append(target)
                         
@@ -187,43 +189,15 @@ class MosquitoDataset(Dataset):
         if use_delta:
             sequences_norm = np.diff(sequences_norm, axis=1).astype(np.float32)
 
-        # ── 5. 최근 N개 타임스텝만 사용 ───────────────────────────────────
-        if seq_len is not None:
-            sequences_norm = sequences_norm[:, -seq_len:, :]
-
-        # ── 6. sub-sequence 확장: 학습 시에만 길이 2..seq_len 을 모두 생성, 앞을 0으로 패딩 ──
-        if is_train and seq_len is not None:
-            new_seqs, expand_idx = [], []
-            for i, seq in enumerate(sequences_norm):   # seq: (seq_len, 3)
-                for sub_len in range(2, seq_len + 1):
-                    sub = seq[-sub_len:]               # (sub_len, 3) — 최근 sub_len개
-                    pad = np.zeros((seq_len - sub_len, 3), dtype=np.float32)
-                    new_seqs.append(np.concatenate([pad, sub], axis=0))
-                    expand_idx.append(i)
-            sequences_norm = np.stack(new_seqs)        # (N*(seq_len-1), seq_len, 3)
-            expand_idx     = np.array(expand_idx)
-            self.file_ids  = [self.file_ids[i] for i in expand_idx]
-        else:
-            expand_idx = np.arange(N)
-
         self.sequences      = list(sequences_norm)
-        self.last_positions = list(raw[expand_idx, -1, :].astype(np.float32))
-        self.rot_mats       = list(rot_mats[expand_idx])
+        self.last_positions = list(raw[:, -1, :].astype(np.float32))
+        self.rot_mats       = list(rot_mats)
 
-        # ── 7. 라벨 처리 (벡터 연산) ─────────────────────────────────────
+        # ── 5. 라벨 처리 (벡터 연산) ─────────────────────────────────────
         if is_train and labels_df is not None:
-<<<<<<< HEAD
-            labels_dict  = labels_df.set_index('id')[['x', 'y', 'z']].T.to_dict('list')
-            target_array = np.array(
-                [labels_dict[fid] for fid in self.file_ids], dtype=np.float32
-            )                                                    # (N_exp, 3)
-            displacement = target_array - raw[expand_idx, -1, :]  # (N_exp, 3)
-=======
-            displacement = target_array - raw[:, -1, :]              # (N, 3)
-            # (target - last) @ R.T  →  einsum 'nj,nij->ni'
->>>>>>> test
+            displacement = target_array - raw[:, -1, :]
             self.targets = list(
-                np.einsum('nj,nij->ni', displacement, rot_mats[expand_idx]).astype(np.float32)
+                np.einsum('nj,nij->ni', displacement, rot_mats).astype(np.float32)
             )
 
     def __len__(self):
@@ -276,7 +250,7 @@ class MosquitoGRU(nn.Module):
         return out
 
 class WingLoss(nn.Module):
-    def __init__(self, w=0.05, epsilon=0.01):
+    def __init__(self, w=0.02, epsilon=0.005):
         super(WingLoss, self).__init__()
         self.w = w
         self.epsilon = epsilon
@@ -314,7 +288,7 @@ def train():
             "device":       str(Config.device),
             "use_delta":    Config.use_delta,
             "use_rotation": Config.use_rotation,
-            "seq_len":      Config.seq_len,
+
             "patience":     Config.patience,
         },
     )
@@ -336,19 +310,12 @@ def train():
                                     augment_fns=augment_fns,
                                     use_delta=Config.use_delta,
                                     use_rotation=Config.use_rotation,
-<<<<<<< HEAD
-                                    seq_len=Config.seq_len)
-    val_dataset   = MosquitoDataset(val_files, train_labels, is_train=True,
-                                    use_delta=Config.use_delta,
-                                    use_rotation=Config.use_rotation,
-                                    seq_len=Config.seq_len)
-=======
-                                    subseq_aug=True)
+                                    subseq_aug=True,
+                                    max_len=Config.max_len)
     val_dataset   = MosquitoDataset(val_files, train_labels, is_train=True,
                                     use_delta=Config.use_delta,
                                     use_rotation=Config.use_rotation,
                                     subseq_aug=False)
->>>>>>> test
     
     train_loader = DataLoader(train_dataset, batch_size=Config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=Config.batch_size, shuffle=False)
@@ -521,8 +488,7 @@ def inference(best_val_dist=None, best_epoch=None):
     test_files = sorted(list(Config.test_dir.glob('TEST_*.csv')))
     test_dataset = MosquitoDataset(test_files, is_train=False,
                                    use_delta=Config.use_delta,
-                                   use_rotation=Config.use_rotation,
-                                   seq_len=Config.seq_len)
+                                   use_rotation=Config.use_rotation)
     test_loader = DataLoader(test_dataset, batch_size=Config.batch_size, shuffle=False)
     
     predictions = []
@@ -580,10 +546,10 @@ if __name__ == '__main__':
     parser.add_argument('--no-rotate', dest='rotate', action='store_false',
                         help="Disable rotation normalization (last-step → +x axis). "
                              "Default: rotation ON")
-    parser.add_argument('--seq-len', type=int, default=None,
-                        help="최근 N개의 타임스텝만 입력으로 사용. "
-                             "raw 모드 최대 11, delta 모드 최대 10. "
-                             "미지정 시 전체 사용 (default)")
+    parser.add_argument('--max-len', type=int, default=None,
+                        help="sub-sequence의 최대 점 개수. "
+                             "예: 5 → 전체 11개 점에서 길이 3~5짜리 sub-seq만 생성. "
+                             "미지정 시 길이 제한 없이 전체 조합 사용 (default)")
     parser.set_defaults(rotate=True)
     args = parser.parse_args()
 
@@ -592,7 +558,7 @@ if __name__ == '__main__':
         Config.run_name = args.name
     Config.use_delta    = (args.input == 'delta')
     Config.use_rotation = args.rotate
-    Config.seq_len      = args.seq_len
+    Config.max_len      = args.max_len
 
     # 디바이스 설정
     if args.device == 'cpu':
