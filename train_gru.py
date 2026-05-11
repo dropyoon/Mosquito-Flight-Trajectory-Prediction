@@ -42,6 +42,7 @@ class Config:
     # 입력 설정 (argparse로 덮어씀)
     use_delta    = False  # --input delta: 11 coords → 10 displacement vectors
     use_rotation = True   # --no-rotate: 회전 정규화 비활성화
+    seq_len      = None   # --seq-len N: 최근 N개 타임스텝만 사용 (None = 전체)
 
     # 학습 설정
     batch_size = 128
@@ -62,7 +63,7 @@ class MosquitoDataset(Dataset):
     _cache_dir = Path('./data/.cache')
 
     def __init__(self, file_paths, labels_df=None, is_train=True, augment_fns=None,
-                 use_delta=False, use_rotation=True):
+                 use_delta=False, use_rotation=True, seq_len=None):
         self.is_train = is_train
         self.augment_fns = augment_fns if augment_fns is not None else []
 
@@ -118,20 +119,38 @@ class MosquitoDataset(Dataset):
         if use_delta:
             sequences_norm = np.diff(sequences_norm, axis=1).astype(np.float32)
 
-        self.sequences      = list(sequences_norm)
-        self.last_positions = list(raw[:, -1, :].astype(np.float32))  # 원본 좌표계
-        self.rot_mats       = list(rot_mats)
+        # ── 5. 최근 N개 타임스텝만 사용 ───────────────────────────────────
+        if seq_len is not None:
+            sequences_norm = sequences_norm[:, -seq_len:, :]
 
-        # ── 5. 라벨 처리 (벡터 연산) ─────────────────────────────────────
+        # ── 6. sub-sequence 확장: 학습 시에만 길이 2..seq_len 을 모두 생성, 앞을 0으로 패딩 ──
+        if is_train and seq_len is not None:
+            new_seqs, expand_idx = [], []
+            for i, seq in enumerate(sequences_norm):   # seq: (seq_len, 3)
+                for sub_len in range(2, seq_len + 1):
+                    sub = seq[-sub_len:]               # (sub_len, 3) — 최근 sub_len개
+                    pad = np.zeros((seq_len - sub_len, 3), dtype=np.float32)
+                    new_seqs.append(np.concatenate([pad, sub], axis=0))
+                    expand_idx.append(i)
+            sequences_norm = np.stack(new_seqs)        # (N*(seq_len-1), seq_len, 3)
+            expand_idx     = np.array(expand_idx)
+            self.file_ids  = [self.file_ids[i] for i in expand_idx]
+        else:
+            expand_idx = np.arange(N)
+
+        self.sequences      = list(sequences_norm)
+        self.last_positions = list(raw[expand_idx, -1, :].astype(np.float32))
+        self.rot_mats       = list(rot_mats[expand_idx])
+
+        # ── 7. 라벨 처리 (벡터 연산) ─────────────────────────────────────
         if is_train and labels_df is not None:
             labels_dict  = labels_df.set_index('id')[['x', 'y', 'z']].T.to_dict('list')
             target_array = np.array(
                 [labels_dict[fid] for fid in self.file_ids], dtype=np.float32
-            )                                          # (N, 3)
-            displacement = target_array - raw[:, -1, :]              # (N, 3)
-            # (target - last) @ R.T  →  einsum 'nj,nij->ni'
+            )                                                    # (N_exp, 3)
+            displacement = target_array - raw[expand_idx, -1, :]  # (N_exp, 3)
             self.targets = list(
-                np.einsum('nj,nij->ni', displacement, rot_mats).astype(np.float32)
+                np.einsum('nj,nij->ni', displacement, rot_mats[expand_idx]).astype(np.float32)
             )
 
     def __len__(self):
@@ -213,6 +232,7 @@ def train():
             "device":       str(Config.device),
             "use_delta":    Config.use_delta,
             "use_rotation": Config.use_rotation,
+            "seq_len":      Config.seq_len,
             "patience":     Config.patience,
         },
     )
@@ -233,10 +253,12 @@ def train():
     train_dataset = MosquitoDataset(train_files, train_labels, is_train=True,
                                     augment_fns=augment_fns,
                                     use_delta=Config.use_delta,
-                                    use_rotation=Config.use_rotation)
+                                    use_rotation=Config.use_rotation,
+                                    seq_len=Config.seq_len)
     val_dataset   = MosquitoDataset(val_files, train_labels, is_train=True,
                                     use_delta=Config.use_delta,
-                                    use_rotation=Config.use_rotation)
+                                    use_rotation=Config.use_rotation,
+                                    seq_len=Config.seq_len)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=Config.batch_size, shuffle=False)
@@ -403,7 +425,8 @@ def inference(best_val_dist=None, best_epoch=None):
     test_files = sorted(list(Config.test_dir.glob('TEST_*.csv')))
     test_dataset = MosquitoDataset(test_files, is_train=False,
                                    use_delta=Config.use_delta,
-                                   use_rotation=Config.use_rotation)
+                                   use_rotation=Config.use_rotation,
+                                   seq_len=Config.seq_len)
     test_loader = DataLoader(test_dataset, batch_size=Config.batch_size, shuffle=False)
     
     predictions = []
@@ -461,6 +484,10 @@ if __name__ == '__main__':
     parser.add_argument('--no-rotate', dest='rotate', action='store_false',
                         help="Disable rotation normalization (last-step → +x axis). "
                              "Default: rotation ON")
+    parser.add_argument('--seq-len', type=int, default=None,
+                        help="최근 N개의 타임스텝만 입력으로 사용. "
+                             "raw 모드 최대 11, delta 모드 최대 10. "
+                             "미지정 시 전체 사용 (default)")
     parser.set_defaults(rotate=True)
     args = parser.parse_args()
 
@@ -469,6 +496,7 @@ if __name__ == '__main__':
         Config.run_name = args.name
     Config.use_delta    = (args.input == 'delta')
     Config.use_rotation = args.rotate
+    Config.seq_len      = args.seq_len
 
     # 디바이스 설정
     if args.device == 'cpu':
