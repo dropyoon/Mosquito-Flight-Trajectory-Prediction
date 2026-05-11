@@ -34,7 +34,7 @@ class Config:
     sample_sub_path = data_dir / 'sample_submission.csv'
     
     # 모델 하이퍼파라미터
-    input_size = 3    # x, y, z  (delta 모드에서도 feature dim은 동일)
+    input_size = 4    # x, y, z + total_path_length (정규화 후 추가)
     hidden_size = 64
     num_layers = 2
     output_size = 3   # 예측할 x, y, z
@@ -48,7 +48,7 @@ class Config:
     # 학습 설정
     batch_size = 128
     epochs = 600
-    lr = 0.0001
+    lr = 0.001
     min_lr = 1e-6          # LR 하한선 설정
     scheduler_factor = 0.5 # 감쇠 폭 완화 (0.1 -> 0.5)
     patience = 50          
@@ -185,9 +185,22 @@ class MosquitoDataset(Dataset):
         rot_last       = raw_rotated[:, -1, :]                    # (N, 3)
         sequences_norm = (raw_rotated - rot_last[:, np.newaxis, :]).astype(np.float32)
 
+        # ── 3.5. 총 이동거리 계산 (position 기준, 패딩 구간은 거리=0) ─────
+        step_diffs = np.diff(sequences_norm, axis=1)               # (N, 10, 3)
+        total_dist = np.linalg.norm(step_diffs, axis=2).sum(axis=1)  # (N,)
+        safe_dist  = np.where(total_dist > 0, total_dist, 1.0)    # 0 나눔 방지
+
         # ── 4. delta 변환: (N, T, 3) → (N, T-1, 3) ───────────────────────
         if use_delta:
             sequences_norm = np.diff(sequences_norm, axis=1).astype(np.float32)
+
+        # ── 4.5. 궤적 길이로 정규화 + total_dist feature 추가 ─────────────
+        sequences_norm = (sequences_norm / safe_dist[:, np.newaxis, np.newaxis]).astype(np.float32)
+        T = sequences_norm.shape[1]
+        total_feat = np.repeat(
+            total_dist[:, np.newaxis, np.newaxis].astype(np.float32), T, axis=1
+        )                                                          # (N, T, 1)
+        sequences_norm = np.concatenate([sequences_norm, total_feat], axis=2)  # (N, T, 4)
 
         self.sequences      = list(sequences_norm)
         self.last_positions = list(raw[:, -1, :].astype(np.float32))
@@ -234,7 +247,7 @@ class MosquitoGRU(nn.Module):
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        # x shape: (batch_size, sequence_length=11, input_size=3)
+        # x shape: (batch_size, sequence_length, input_size=4)  # 4 = xyz_normalized + total_dist
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         
         out, _ = self.gru(x, h0)
