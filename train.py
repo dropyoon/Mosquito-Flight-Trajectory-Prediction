@@ -56,7 +56,9 @@ def train():
                                     augment_fns=augment_fns,
                                     use_delta=Config.use_delta,
                                     use_rotation=Config.use_rotation,
-                                    subseq_aug=True)
+                                    subseq_aug=True,
+                                    subseq_min_len=Config.subseq_min_len,
+                                    subseq_max_len=Config.subseq_max_len)
     val_dataset   = MosquitoDataset(val_files, train_labels, is_train=True,
                                     use_delta=Config.use_delta,
                                     use_rotation=Config.use_rotation,

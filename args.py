@@ -48,6 +48,10 @@ class Config:
     seed = 42
     run_name = "GRU"  # wandb 실행 이름
 
+    # Sub-sequence 증강 길이 범위
+    subseq_min_len = 2
+    subseq_max_len = 11
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -70,6 +74,11 @@ def parse_args():
                         help="Disable rotation normalization (last-step → +x axis). "
                              "Default: rotation ON")
 
+    parser.add_argument('--subseq-min', type=int, default=2,
+                        help="Sub-sequence 증강 최소 길이 (default: 2)")
+    parser.add_argument('--subseq-max', type=int, default=11,
+                        help="Sub-sequence 증강 최대 길이 (default: 11)")
+
     parser.add_argument('--model_path', type=str, default=None,
                         help="Specific model path for inference")
 
@@ -84,6 +93,8 @@ def apply_args(args):
         Config.run_name = args.name
     Config.use_delta    = (args.input == 'delta')
     Config.use_rotation = args.rotate
+    Config.subseq_min_len = args.subseq_min
+    Config.subseq_max_len = args.subseq_max
 
     # 디바이스 설정
     if args.device == 'auto':

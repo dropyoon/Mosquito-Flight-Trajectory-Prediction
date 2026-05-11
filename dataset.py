@@ -18,10 +18,13 @@ class MosquitoDataset(Dataset):
     _cache_dir = Path('./data/.cache')
 
     def __init__(self, file_paths, labels_df=None, is_train=True, augment_fns=None,
-                 use_delta=False, use_rotation=True, subseq_aug=False):
+                 use_delta=False, use_rotation=True, subseq_aug=False,
+                 subseq_min_len=2, subseq_max_len=11):
         self.is_train = is_train
         self.augment_fns = augment_fns if augment_fns is not None else []
         self.subseq_aug = subseq_aug
+        self.subseq_min_len = subseq_min_len
+        self.subseq_max_len = subseq_max_len
 
         # ── 1. raw sequences 로드 (캐시 우선 → 병렬 I/O) ─────────────────
         self._cache_dir.mkdir(exist_ok=True)
@@ -68,7 +71,10 @@ class MosquitoDataset(Dataset):
 
         # ── 2.5. Sub-sequence Augmentation (Forward & Reverse) ──────────
         if is_train and original_targets is not None and self.subseq_aug:
-            raw, target_array = generate_subsequences(raw, original_targets)
+            raw, target_array = generate_subsequences(
+                raw, original_targets,
+                min_len=self.subseq_min_len, max_len=self.subseq_max_len
+            )
         elif is_train and original_targets is not None:
             target_array = original_targets
         else:
