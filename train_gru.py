@@ -443,7 +443,7 @@ def train():
 # ==========================================
 # 5. Inference / Prediction (추론 루프)
 # ==========================================
-def inference(best_val_dist=None, best_epoch=None):
+def inference(best_val_dist=None, best_epoch=None, model_path=None):
     # 저장된 베스트 모델 불러오기
     model = MosquitoGRU(
         input_size=Config.input_size, 
@@ -453,7 +453,9 @@ def inference(best_val_dist=None, best_epoch=None):
         dropout_rate=Config.dropout_rate
     ).to(Config.device)
     
-    if best_epoch is not None and best_val_dist is not None:
+    if model_path is not None:
+        pass # use provided model_path
+    elif best_epoch is not None and best_val_dist is not None:
         # train()에서 반환받은 Dist와 Epoch으로 정확한 매칭
         model_path = f'model/gru_{best_val_dist:.4f}_{best_epoch}.pth'
     else:
@@ -538,6 +540,8 @@ if __name__ == '__main__':
     parser.add_argument('--no-rotate', dest='rotate', action='store_false',
                         help="Disable rotation normalization (last-step → +x axis). "
                              "Default: rotation ON")
+    parser.add_argument('--model_path', type=str, default=None,
+                        help="Specific model path for inference")
     parser.set_defaults(rotate=True)
     args = parser.parse_args()
 
@@ -577,4 +581,4 @@ if __name__ == '__main__':
         
     if args.mode in ['infer', 'all']:
         print("\n--- Starting Inference ---")
-        inference(best_dist, best_epoch)
+        inference(best_dist, best_epoch, args.model_path)
