@@ -1,2 +1,14 @@
 #datasets
 data/
+__pycache__/
+result/
+model/
+
+#log
+wandb/
+
+#mac
+.DS_Store
+
+#vs
+.vscode/
