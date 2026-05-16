@@ -54,7 +54,7 @@ class MosquitoGRU_M2M(nn.Module):
 
 
 class WingLoss(nn.Module):
-    def __init__(self, w=0.05, epsilon=0.01):
+    def __init__(self, w=0.02, epsilon=0.005):
         super(WingLoss, self).__init__()
         self.w = w
         self.epsilon = epsilon
